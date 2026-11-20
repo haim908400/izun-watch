@@ -1,12 +1,16 @@
 package com.izun.wrap
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
@@ -41,6 +45,24 @@ class MainActivity : ComponentActivity() {
             lifecycleScope.launch { readAndPush() }
         }
 
+    // WebView file inputs (<input type="file">) do nothing without a WebChromeClient
+    // that launches a real document picker. This launcher delivers the picked
+    // image(s) back to the page, or null when the user cancels.
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+
+    private val fileChooserLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val callback = filePathCallback ?: return@registerForActivityResult
+            filePathCallback = null
+            val uris =
+                if (result.resultCode == Activity.RESULT_OK) {
+                    WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+                } else {
+                    null
+                }
+            callback.onReceiveValue(uris)
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         webView = WebView(this)
@@ -64,6 +86,27 @@ class MainActivity : ComponentActivity() {
                     } catch (_: Exception) {
                     }
                     true
+                }
+            }
+        }
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(
+                view: WebView,
+                callback: ValueCallback<Array<Uri>>,
+                params: FileChooserParams
+            ): Boolean {
+                // Cancel any earlier pending request before starting a new one.
+                filePathCallback?.onReceiveValue(null)
+                filePathCallback = callback
+                return try {
+                    // createIntent() carries the page's accept types (image/*) and
+                    // any capture request, so camera capture keeps working too.
+                    fileChooserLauncher.launch(params.createIntent())
+                    true
+                } catch (e: Exception) {
+                    filePathCallback = null
+                    callback.onReceiveValue(null)
+                    false
                 }
             }
         }
